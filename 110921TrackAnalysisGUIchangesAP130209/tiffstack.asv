@@ -1,0 +1,266 @@
+function tiffstack(tracks,tif,MinSteps)
+%trying to get the path for each molecule but only opening one frame- 
+%got it working 28/11/11
+%not speeded up up to now
+%try O and strait line 06/12/11
+%this would remove one while-loop and one if-clause
+%therefore get functions Circle and StraitLine implemented
+%last modified (color code) on 22/02/12
+%Anne Plochowietz
+
+[TIRFFilename, TIRFPathname] = uigetfile(...
+   {'*.fits', 'TIRF data: (*.fits)';...
+   '*.tif', 'TIRF data: (*.tif)'});
+
+loadname = [TIRFPathname TIRFFilename];
+
+if ~(isnumeric(TIRFFilename)&&TIRFFilename==0) %check the user has not pressed cancel
+    if (tif ==0)
+ImageInfo = fits_read_header([TIRFPathname TIRFFilename]);
+%get image size
+imageLim = [1 ImageInfo.NAXIS1 1 ImageInfo.NAXIS2];
+%get data of .fits file as image data for each image in the stack        
+DataIn = ImageStack(loadname, imageLim);
+    else
+info = imfinfo(loadname);
+%get length of image stack- nFrame
+nFrame = numel(info);
+I1 = double(imread(loadname, 1, 'Info', info));
+[H,W,D] = size(I1);
+imageLim = [1 W 1 H];
+    end    
+%get number of frames in the stack              
+maxframes = max(tracks(:,3));
+%get total number of tracked molecules
+nMolecules = max(tracks(:,4));
+
+%choose directory to save the movie after acquisition
+[MovieFilename, MoviePathname] = uiputfile('*.tif', 'Save movie as: (*.tif)');
+if ~(isnumeric(MovieFilename)&&MovieFilename==0) %check the user has not pressed cancel
+savename = [MoviePathname MovieFilename];
+
+%Initialisation of the colormap for TIRF images using the first image
+    if (tif ==0)
+I = getFrame(DataIn,1);
+    else
+I = imread(loadname,1,'Info',info);
+    end
+map = zeros(max(max(I))+1,3); %colourmatrix
+colourrange = single(max(max(I))-min(min(I))); %difference between largeset and smallest intensity value
+offset = single(min(min(I))); % smallest colour value
+for count = min(min(I)):max(max(I))
+    map(count+1,:)=(single(count)-offset)/colourrange;
+end
+%for cross/tracks colour use ten different colours from jet colormap
+cmap = colormap(jet(10));
+%Initialization
+OfInterest = zeros(maxframes,3);
+filterParams(1) = 40;%threshold
+filterParams(2) = 1;%lnoise
+filterParams(3) = 7;%lobject
+windowSize = filterParams(3);
+initguess = [];
+posThresh = windowSize/2; % if the pos moves more than windowSize/2 from initialPos, drop it
+sigmaLim = [0 inf];
+
+counter = 1;
+for fra=1:maxframes
+    %index in tracks array of tracked particles in frame (fra)
+    clear indInFra;
+    indInFra = find(tracks(:,3)==fra);
+        if (tif == 0)
+    %get (fra) image/frame from stack
+    I = double(getFrame(DataIn,fra));
+        else
+    I = double(imread(loadname, fra, 'Info', info));
+        end
+    %introduced to adjust image contrast per frame independently
+    map = zeros(max(max(I))+1,3); %colourmatrix
+    colourrange = single(max(max(I))-min(min(I))); %difference between largeset and smallest intensity value
+    offset = single(min(min(I))); % smallest colour value
+        for count = min(min(I)):max(max(I))
+            map(count+1,:)=(single(count)-offset)/colourrange;
+        end    
+    %flip image vertically, because tracked data is flip so as well
+    I = flipud(I);
+    %xy = findLocalMax(I, filterParams(1));
+    %convert to grayscale image to rgb
+    Irgb = ind2rgb(I,map);
+      
+    for par=1:numel(indInFra)
+        %take positions from track
+        xpos = round(tracks(indInFra(par),1));
+        ypos = round(tracks(indInFra(par),2));
+        trackID = round(tracks(indInFra(par),4));
+        
+        %check,if particle occurs in more than four frames
+        clear tracklength;
+        tracklength = numel(find(tracks(:,4)==trackID));
+        if (tracklength>MinSteps)
+        %check, if particle is to close to the edge of the frame
+        if (5 < xpos) && (xpos < (imageLim(2)-5)) && (5 < ypos) && (ypos < (imageLim(4)-5))
+            %write coloured circles directly into Irgb
+            [rowCircle,colCircle] = find(Circle(xpos,ypos));
+            %only for a test
+            for ina1=1:length(rowCircle)
+            Irgb(rowCircle(ina1),colCircle(ina1),1) = cmap(mod(trackID,10)+1,1);
+            Irgb(rowCircle(ina1),colCircle(ina1),2) = cmap(mod(trackID,10)+1,2);
+            Irgb(rowCircle(ina1),colCircle(ina1),3) = cmap(mod(trackID,10)+1,3);
+            end
+    %         Irgb(ypos,(xpos-5):(xpos+5),1) = cmap(mod(tracks(trackID,4),10)+1,1);
+    %         Irgb(ypos,(xpos-5):(xpos+5),2) = cmap(mod(tracks(trackID,4),10)+1,2);
+    %         Irgb(ypos,(xpos-5):(xpos+5),3) = cmap(mod(tracks(trackID,4),10)+1,3);
+    %         
+    %         Irgb((ypos-5):(ypos+5),xpos,1) = cmap(mod(tracks(trackID,4),10)+1,1);
+    %         Irgb((ypos-5):(ypos+5),xpos,2) = cmap(mod(tracks(trackID,4),10)+1,2);
+    %         Irgb((ypos-5):(ypos+5),xpos,3) = cmap(mod(tracks(trackID,4),10)+1,3);
+            
+            %my photon count
+            [rowTotalCircle,colTotalCircle] = find(TotalCircle(xpos,ypos));
+            my_phot_count = sum(sum(I(rowTotalCircle,colTotalCircle)));
+           
+            %fit gaussian again for Io, BG and phot_count
+            xy = [xpos ypos];
+            [phot_count, a, normChi2, posFinal, eccentricity] = freeGaussFitEllipse(I, xy, windowSize,posThresh, sigmaLim, initguess,'autoDetect');
+                
+            %[phot_count, a, normChi2, posFinal, eccentricity] = freeGaussFitEllipse(I, xy(par,:), windowSize,posThresh, sigmaLim, initguess,'autoDetect');
+            OfInterest(counter,:) = [fra, trackID, my_phot_count, phot_count, a(1), a(4), xpos, ypos, a(2), a(3), eccentricity, a(7)];
+            counter = counter + 1;
+            
+            xframe = fra-1;
+            while (xframe > 0)
+                clear indInXframe;
+                indInXframe = find(tracks(:,3)==xframe);
+                parX = 1;
+                boolean = 0;
+                while (parX < (numel(indInXframe)+1))
+                    if (tracks(indInXframe(parX),4) == trackID)
+                        xold = round(tracks(indInXframe(parX),1));
+                        yold = round(tracks(indInXframe(parX),2));
+                        %draw line between tracked particles
+
+                        [rowLine,colLine] = find(StraitLine(xold,yold,xpos,ypos));
+                        %only for a test
+                        for ina2=1:length(rowLine)
+                        Irgb(rowLine(ina2),colLine(ina2),1) = cmap(mod(trackID,10)+1,1);
+                        Irgb(rowLine(ina2),colLine(ina2),2) = cmap(mod(trackID,10)+1,2);
+                        Irgb(rowLine(ina2),colLine(ina2),3) = cmap(mod(trackID,10)+1,3);
+                        end
+                        boolean = 1;
+    %                     xlength = xpos - xold;%get how far they have moved from (fra-1) to (fra)
+    %                     ylength = ypos - yold;
+    %                     boolean = 1;
+    %                     while (abs(xlength) > 0) || (abs(ylength) > 0)
+    %                     if (abs(xlength) > abs(ylength))
+    %                         xpos = round(xpos-sign(xlength));
+    %                         if (xpos > 0) && (ypos > 0)
+    %                         Irgb(ypos,xpos,1) = cmap(mod(tracks(trackID,4),10)+1,1);
+    %                         Irgb(ypos,xpos,2) = cmap(mod(tracks(trackID,4),10)+1,2);
+    %                         Irgb(ypos,xpos,3) = cmap(mod(tracks(trackID,4),10)+1,3);
+    %                         end
+    %                         xlength = xlength-sign(xlength);
+    %                     else
+    %                         ypos = round(ypos-sign(ylength));
+    %                         if (xpos > 0) && (ypos > 0)
+    %                         Irgb(ypos,xpos,1) = cmap(mod(tracks(trackID,4),10)+1,1);
+    %                         Irgb(ypos,xpos,2) = cmap(mod(tracks(trackID,4),10)+1,2);
+    %                         Irgb(ypos,xpos,3) = cmap(mod(tracks(trackID,4),10)+1,3);
+    %                         end
+    %                         ylength = ylength-sign(ylength);
+    %                     end
+    %                     end
+                        xpos = xold;
+                        ypos = yold;
+                        parX = numel(indInXframe)+1;
+                        xframe = xframe -1;
+                    end
+                parX = parX+1;
+                end
+                if (boolean == 0)
+                    xframe = 0;
+                end
+            end
+            
+        end
+        end
+    end
+%save images in a 'tif' stack, use WriteMode append
+imwrite(Irgb, savename ,'WriteMode','append','Compression','none'); %perhaps add description to get iminfo afterwards
+
+if(mod(fra,100) == 0)
+    disp('...................')
+end
+end
+save([savename '_Idata.mat'],'OfInterest');
+disp('all done.')
+end
+end
+%keyboard;
+%--------------------------------------------------------------------------
+function sparseCircle = Circle(x,y)
+%function that returns sparse matrix with ones at positions where rgb
+%values should change, use find(Circle(xpos,ypos)) to get the positions of circle,
+%go into Irgb with this
+%Circle radius = 4 pixels (like in plot command)
+
+jj = [x,x,x+1,x+1,x+2,x+2,x+3,x+3,x+3,x+3,x+4,x+4,x+4 ...
+          x-1,x-1,x-2,x-2,x-3,x-3,x-3,x-3,x-4,x-4,x-4];
+ii = [y+4,y-4,y+4,y-4,y+3,y-3,y+3,y-3,y+2,y-2,y-1,y,y+1 ...
+              y+4,y-4,y+3,y-3,y+3,y-3,y+2,y-2,y-1,y,y+1];
+
+sparseCircle = sparse(ii,jj,1);
+
+%--------------------------------------------------------------------------
+function totalCircle = TotalCircle(x,y)
+%function that returns sparse matrix with ones at positions where rgb
+%values should change, use find(Circle(xpos,ypos)) to get the positions of circle,
+%go into Irgb with this
+%Circle radius = 4 pixels
+%Anne Plochowietz 2012-07-13
+
+jj = [x,x,x,x,x,x,x,x,x, ...
+        x+1,x+1,x+1,x+1,x+1,x+1,x+1,x+1,x+1, ...
+        x-1,x-1,x-1,x-1,x-1,x-1,x-1,x-1,x-1, ...
+        x+2,x+2,x+2,x+2,x+2,x+2,x+2, ...
+        x-2,x-2,x-2,x-2,x-2,x-2,x-2, ...
+        x+3,x+3,x+3,x+3,x+3,x+3,x+3, ...
+        x-3,x-3,x-3,x-3,x-3,x-3,x-3, ...
+        x+4,x+4,x+4, ...
+        x-4,x-4,x-4];
+
+ii = [y+4,y-4,y+3,y-3,y+2,y-2,y+1,y-1,y, ...
+        y+4,y-4,y+3,y-3,y+2,y-2,y+1,y-1,y, ...
+        y+4,y-4,y+3,y-3,y+2,y-2,y+1,y-1,y, ...
+        y+3,y-3,y+2,y-2,y+1,y-1,y, ...
+        y+3,y-3,y+2,y-2,y+1,y-1,y, ...
+        y+3,y-3,y+2,y-2,y+1,y-1,y, ...
+        y+3,y-3,y+2,y-2,y+1,y-1,y, ...
+        y+1,y-1,y, ...
+        y+1,y-1,y];
+
+totalCircle = sparse(ii,jj,1);
+
+
+%--------------------------------------------------------------------------
+function sparseStraitLine = StraitLine(xold,yold,xpos,ypos)
+%function that returns sparse matrix with ones at positions where rgb
+%values should change, use find(StraitLine(xold,yold,xpos,ypos)) to get the positions of strait line,
+%go into Irgb with this
+
+m = (ypos-yold)/(xpos-xold);
+n = (yold*xpos-ypos*xold)/(xpos-xold);
+xlength = xpos-xold;
+ylength = ypos-yold;
+
+if(abs(xlength) >= abs(ylength))
+x = round(xpos -sign(xlength)*[1:abs(xlength)]);
+y = round(m*x + n);
+elseif (abs(xlength) < abs(ylength))
+y = round(ypos -sign(ylength)*[1:abs(ylength)]);
+x = round((y-n)/m);%problem, x = -inf/inf = NaN might appear
+    if (isnan(x) ==1)
+    x = xpos;    
+    end    
+end    
+sparseStraitLine = sparse(y,x,1);
+
