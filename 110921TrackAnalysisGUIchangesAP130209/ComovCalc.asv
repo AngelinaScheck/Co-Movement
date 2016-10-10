@@ -72,9 +72,7 @@ for r = 1:nMoleculesR % loop over tracks
                 if abs(diff(filtGreenList(g).x(p), tracksR(1,r))) <= distanceThreshold
                     %compare y values
                     if abs(diff(filtGreenList(g).y(p), tracksR(1,r))) <= distanceThreshold
-                        %If both distances match, copy the redTrack
-                        %Position
-                        
+                        %If both distances match, copy
                         
                     end
                 end
