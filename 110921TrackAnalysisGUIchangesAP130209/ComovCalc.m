@@ -21,6 +21,14 @@ filTGreen = struct('id',{},'steps',{},'x',{},'y',{},'frames',{},'partner',{});
 filTRed = struct('id',{},'steps',{},'x',{},'y',{},'frames',{},'partner',{});
 
 filtGreenList=[];
+mapGreen = containers.Map
+mapRed= containers.Map
+xy = struct('x', {}, 'y', {});
+
+%Matching IDs will be stored in a table, distances can be checked by looking IDs up in mapRed and mapGreen data structures
+idMatch = zeros(0,2); %//greenID //matching red ID
+
+
 
 %Filter and Copy to Map
 % Aim: loop through every Tracklist only once to save time is not possible
@@ -31,10 +39,10 @@ for i = 1:nMolecules % loop over tracks
     % indexes of track in the tracks file
     index = find(tracksG(:,4)==i);
     steplength=numel(index);
-    if steplength > stepnumber % copy tracks with more then stepnumber stepts into map filestructure
+    if steplength > stepnumber % copy tracks with more then stepnumber steps into map filestructure
         x= []; %x positions of the track by time point
         y= []; %y positions of the track by time point
-        frame = []; % correspontind framenumbers (should be sorted)
+        frame = []; % corresponting framenumbers (should be sorted)
         for j=1:size(index)
             x(end+1) = tracksG(index(j), 1);
             y(end+1) = tracksG(index(j), 2);
@@ -45,6 +53,10 @@ for i = 1:nMolecules % loop over tracks
         filtGreen.x=x;
         filtGreen.y=y;
         filtGreen.frame=frame;
+		
+		xy.x=x;
+		xy.y=y;
+		mapGreen(id)=xy;
         
         filtGreenList(end+1) = filtGreen;
     end
@@ -60,23 +72,20 @@ for r = 1:nMoleculesR % loop over tracks
     % indexes of track in the tracks file
     index = find(tracksR(:,4)==r);
     steplength=numel(index);
-    if steplength > stepnumber % copy tracks with more then stepnumber stepts into map filestructure
+    if steplength > stepnumber % compare with step-threshold
         
+		
         %Immediatly compare with filtered green Tracks. Save only, if there
         %is a match in the green tracks
         %loop over green tracks
         for g= 1:size(filtGreenList)
             %loop over positions in green track
             for p=1:size(filtGreenList(g).x)
-                %Compare x values
-                if abs(diff(filtGreenList(g).x(p), tracksR(1,r))) <= distanceThreshold
-                    %compare y values
-                    if abs(diff(filtGreenList(g).y(p), tracksR(1,r))) <= distanceThreshold
-                        %If both distances match, copy the redTrack
-                        %Position
-                        
-                        
-                    end
+                %Compare distance
+                if sqrt((diff(filtGreenList(g).x(p), tracksR(1,r)))^2 + (diff(filtGreenList(g).y(p), tracksR(1,r)))^2 ) <= distanceThreshold
+					%copy the redTrack
+				
+				
                 end
            end
         end
